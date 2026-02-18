@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard – Deepfake Detection</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+<nav class="navbar">
+    <div class="container">
+        <div class="nav-brand"><h1>🔍 Deepfake Detector</h1></div>
+        <div class="nav-links">
+            <span id="user-name" class="user-name"></span>
+            <a href="dashboard.html" class="active">Dashboard</a>
+            <a href="upload.html">New Detection</a>
+            <a href="history.html">History</a>
+            <a href="profile.html">Profile</a>
+            <button id="dark-toggle" onclick="DarkMode.toggle()" class="btn btn-sm" title="Toggle dark mode">🌙</button>
+            <button onclick="logout()" class="btn btn-sm">Logout</button>
+        </div>
+        <button class="hamburger" id="hamburger" onclick="toggleMobileNav()">☰</button>
+    </div>
+    <div class="mobile-nav" id="mobile-nav">
+        <a href="dashboard.html">Dashboard</a>
+        <a href="upload.html">New Detection</a>
+        <a href="history.html">History</a>
+        <a href="profile.html">Profile</a>
+        <a href="#" onclick="logout()">Logout</a>
+    </div>
+</nav>
+
+<div class="dashboard-container">
+    <div class="container">
+        <div class="dashboard-header">
+            <h1>Welcome, <span id="welcome-user"></span>!</h1>
+            <p>Your deepfake detection overview</p>
+        </div>
+
+        <!-- Stat cards -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon">📊</div>
+                <div class="stat-info"><h3 id="total-detections">0</h3><p>Total Detections</p></div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">✅</div>
+                <div class="stat-info"><h3 id="real-count">0</h3><p>Real Content</p></div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">⚠️</div>
+                <div class="stat-info"><h3 id="fake-count">0</h3><p>Fake Detected</p></div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">🎯</div>
+                <div class="stat-info"><h3 id="avg-confidence">0%</h3><p>Avg Confidence</p></div>
+            </div>
+        </div>
+
+        <!-- Charts row -->
+        <div class="charts-row">
+            <div class="chart-card">
+                <h3>Real vs Fake</h3>
+                <div class="chart-wrap-sm"><canvas id="donut-chart"></canvas></div>
+            </div>
+            <div class="chart-card chart-card-wide">
+                <h3>Detections – Last 7 Days</h3>
+                <canvas id="trend-chart" height="90"></canvas>
+            </div>
+        </div>
+
+        <!-- Action cards -->
+        <div class="action-cards">
+            <div class="action-card">
+                <h3>🖼️ Analyse Image</h3>
+                <p>Detect deepfakes in images</p>
+                <a href="upload.html?type=image" class="btn btn-primary">Upload Image</a>
+            </div>
+            <div class="action-card">
+                <h3>🎥 Analyse Video</h3>
+                <p>Detect deepfakes in videos</p>
+                <a href="upload.html?type=video" class="btn btn-primary">Upload Video</a>
+            </div>
+            <div class="action-card">
+                <h3>📦 Bulk Upload</h3>
+                <p>Analyse up to 10 files at once</p>
+                <a href="upload.html?mode=bulk" class="btn btn-primary">Bulk Upload</a>
+            </div>
+        </div>
+
+        <!-- Recent detections -->
+        <div class="recent-activity">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;">
+                <h2>Recent Detections</h2>
+                <a href="history.html" class="btn btn-sm btn-secondary">View All →</a>
+            </div>
+            <div id="recent-detections"><div class="loading">Loading…</div></div>
+        </div>
+    </div>
+</div>
+
+<script src="js/config.js"></script>
+<script>
+requireAuth();
+const user = Storage.getUser();
+document.getElementById('user-name').textContent    = user.full_name;
+document.getElementById('welcome-user').textContent = user.full_name;
+
+function toggleMobileNav() {
+    document.getElementById('mobile-nav').classList.toggle('open');
+}
+
+async function loadStats() {
+    try {
+        const data  = await API.request(API_CONFIG.ENDPOINTS.USER_STATS);
+        const stats = data.stats;
+        document.getElementById('total-detections').textContent = stats.total_detections||0;
+        document.getElementById('real-count').textContent       = stats.real_count||0;
+        document.getElementById('fake-count').textContent       = stats.fake_count||0;
+        document.getElementById('avg-confidence').textContent   = stats.avg_confidence?(Math.round(stats.avg_confidence)+'%'):'0%';
+
+        // Doughnut chart
+        if (stats.total_detections > 0) {
+            new Chart(document.getElementById('donut-chart'), {
+                type: 'doughnut',
+                data: {
+                    labels: ['Real','Fake'],
+                    datasets: [{
+                        data: [stats.real_count||0, stats.fake_count||0],
+                        backgroundColor: ['#059669','#dc2626'],
+                        borderWidth: 2,
+                    }]
+                },
+                options: {
+                    responsive:true, maintainAspectRatio:true,
+                    plugins:{ legend:{ position:'bottom' } }
+                }
+            });
+        }
+
+        // Line/bar trend chart
+        if (stats.weekly_trend) {
+            new Chart(document.getElementById('trend-chart'), {
+                type: 'bar',
+                data: {
+                    labels: stats.weekly_trend.map(d=>d.date),
+                    datasets: [{
+                        label: 'Detections',
+                        data:  stats.weekly_trend.map(d=>d.count),
+                        backgroundColor: 'rgba(6,182,212,.6)',
+                        borderColor:     '#06b6d4',
+                        borderWidth: 1, borderRadius: 4,
+                    }]
+                },
+                options: {
+                    responsive:true,
+                    plugins:{ legend:{ display:false } },
+                    scales:{ y:{ beginAtZero:true, ticks:{ stepSize:1 } } }
+                }
+            });
+        }
+    } catch(e) { console.error('Stats error',e); }
+}
+
+async function loadRecent() {
+    try {
+        const data = await API.request(API_CONFIG.ENDPOINTS.HISTORY+'?limit=5');
+        const el   = document.getElementById('recent-detections');
+        if (!data.history.length) {
+            el.innerHTML='<p class="empty-state">No detections yet. Start by uploading a file!</p>'; return;
+        }
+        el.innerHTML = data.history.map(d=>`
+            <div class="detection-item">
+                <div class="detection-icon">${d.file_type==='image'?'🖼️':'🎥'}</div>
+                <div class="detection-info">
+                    <h4>${d.file_name}</h4>
+                    <p>Result: <span class="result ${d.result}">${d.result.toUpperCase()}</span>
+                       &nbsp;·&nbsp; Confidence: ${d.confidence}%
+                       ${d.is_demo?'&nbsp;<span class="demo-tag">DEMO</span>':''}
+                    </p>
+                    <small>${new Date(d.created_at).toLocaleString()}</small>
+                </div>
+            </div>`).join('');
+    } catch(e) {
+        document.getElementById('recent-detections').innerHTML='<p class="error">Failed to load.</p>';
+    }
+}
+
+loadStats();
+loadRecent();
+</script>
+</body>
+</html>

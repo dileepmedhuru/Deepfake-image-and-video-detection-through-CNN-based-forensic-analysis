@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload & Analyse – Deepfake Detection</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body>
+<nav class="navbar">
+    <div class="container">
+        <div class="nav-brand"><h1>🔍 Deepfake Detector</h1></div>
+        <div class="nav-links">
+            <span id="user-name" class="user-name"></span>
+            <a href="dashboard.html">Dashboard</a>
+            <a href="upload.html" class="active">New Detection</a>
+            <a href="history.html">History</a>
+            <button onclick="logout()" class="btn btn-sm">Logout</button>
+        </div>
+    </div>
+</nav>
+
+<div class="dashboard-container">
+    <div class="container">
+        <div class="upload-section">
+            <h1>Upload &amp; Analyse Content</h1>
+            <p>Upload an image or video to detect if it's real or manipulated</p>
+
+            <!-- Demo mode warning (shown by JS when is_demo=true) -->
+            <div id="demo-banner" class="demo-banner" style="display:none;">
+                ⚠️ <strong>Demo Mode:</strong> No ML model is loaded. Results are random and for
+                demonstration only.
+            </div>
+
+            <div class="upload-tabs">
+                <button class="tab-btn active" data-type="image">📷 Image</button>
+                <button class="tab-btn"        data-type="video">🎥 Video</button>
+            </div>
+
+            <div id="error-message"   class="error-message"   style="display:none;"></div>
+            <div id="success-message" class="success-message" style="display:none;"></div>
+
+            <!-- Drop zone -->
+            <div class="upload-area" id="upload-area">
+                <div class="upload-icon">📁</div>
+                <h3>Drag &amp; Drop or Click to Upload</h3>
+                <p id="file-types">Supported: JPG, PNG, GIF, BMP</p>
+                <input type="file" id="file-input" accept="image/*" hidden>
+                <button class="btn btn-primary"
+                        onclick="document.getElementById('file-input').click()">
+                    Choose File
+                </button>
+            </div>
+
+            <!-- Preview -->
+            <div id="file-preview" class="file-preview" style="display:none;">
+                <h3>Selected File:</h3>
+                <div class="preview-container">
+                    <img   id="image-preview" style="display:none;">
+                    <video id="video-preview" controls style="display:none;"></video>
+                    <div id="file-info"></div>
+                </div>
+                <div class="preview-actions">
+                    <button class="btn btn-secondary" onclick="resetUpload()">Change File</button>
+                    <button class="btn btn-primary"   onclick="analyzeFile()">Analyse Now</button>
+                </div>
+            </div>
+
+            <!-- Progress -->
+            <div id="progress-section" class="progress-section" style="display:none;">
+                <h3>Analysing…</h3>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill" style="width:0%;"></div>
+                </div>
+                <p id="progress-text">Uploading file… 0%</p>
+            </div>
+
+            <!-- Results -->
+            <div id="results-section" class="results-section" style="display:none;">
+                <h2>Analysis Results</h2>
+                <div class="result-card">
+                    <div class="result-status" id="result-status"></div>
+
+                    <div class="result-details">
+                        <div class="detail-item">
+                            <span class="label">Confidence:</span>
+                            <span class="value" id="confidence-value"></span>
+                        </div>
+                        <!-- Confidence bar -->
+                        <div class="confidence-bar-wrap">
+                            <div class="confidence-bar-bg">
+                                <div id="confidence-bar" class="confidence-bar-fill"
+                                     style="width:0%;"></div>
+                            </div>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">Processing Time:</span>
+                            <span class="value" id="processing-time"></span>
+                        </div>
+                    </div>
+
+                    <div class="result-actions">
+                        <a id="detail-link" href="#" class="btn btn-primary"
+                           style="display:none;">View Full Details</a>
+                        <button class="btn btn-secondary"
+                                onclick="window.location.href='dashboard.html'">
+                            Dashboard
+                        </button>
+                        <button class="btn btn-secondary" onclick="resetUpload()">
+                            Analyse Another
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /upload-section -->
+    </div>
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/upload.js"></script>
+</body>
+</html>

@@ -1,0 +1,192 @@
+Forgery_detection/
+│
+├── .env                                    # Environment variables (optional)
+├── .gitignore                              # Git ignore rules
+├── README.md                               # Project documentation
+├── setup.py                                # Database initialization script
+│
+├── Celeb-DF-v1/                           # Original dataset (NOT in git)
+│   ├── Celeb-real/                        # Real celebrity videos
+│   ├── Celeb-synthesis/                   # Fake/synthesized videos
+│   └── YouTube-real/                      # Real YouTube videos
+│
+├── processed_dataset/                      # Preprocessed frames (NOT in git)
+│   ├── train/
+│   │   ├── fake/                          # Training fake images
+│   │   └── real/                          # Training real images
+│   ├── validation/
+│   │   ├── fake/                          # Validation fake images
+│   │   └── real/                          # Validation real images
+│   └── test/
+│       ├── fake/                          # Test fake images
+│       └── real/                          # Test real images
+│
+├── database/
+│   ├── schema.sql                         # Database schema definition
+│   └── deepfake.db                        # SQLite database (auto-created)
+│
+├── backend/
+│   ├── app.py                             # Main Flask application
+│   ├── config.py                          # Configuration settings
+│   ├── database.py                        # Database connection
+│   ├── models.py                          # Database models (User, Detection)
+│   ├── utils.py                           # Helper functions
+│   │
+│   ├── auth_routes.py                     # Authentication endpoints
+│   ├── detection_routes.py               # Detection endpoints
+│   ├── admin_routes.py                    # Admin endpoints
+│   │
+│   ├── requirements.txt                   # Python dependencies
+│   │
+│   ├── data_preprocessing.py              # Frame extraction script
+│   ├── train_model.py                     # CNN training script
+│   ├── evaluate_model.py                  # Model evaluation script
+│   │
+│   └── uploads/                           # User uploaded files (auto-created)
+│       ├── images/                        # Uploaded images
+│       └── videos/                        # Uploaded videos
+│
+├── frontend/
+│   ├── index.html                         # Landing page
+│   ├── login.html                         # User login page
+│   ├── signup.html                        # User registration page
+│   ├── admin-login.html                   # Admin login page
+│   ├── dashboard.html                     # User dashboard
+│   ├── upload.html                        # Upload & analyze page
+│   ├── results.html                       # Detection results page
+│   ├── history.html                       # Detection history page
+│   ├── admin-dashboard.html               # Admin dashboard
+│   │
+│   ├── css/
+│   │   ├── style.css                      # Main styles
+│   │   ├── auth.css                       # Authentication page styles
+│   │   ├── dashboard.css                  # Dashboard styles
+│   │   └── admin.css                      # Admin panel styles
+│   │
+│   └── js/
+│       ├── config.js                      # API configuration
+│       ├── auth.js                        # Authentication logic
+│       ├── upload.js                      # File upload logic
+│       ├── detection.js                   # Detection results logic
+│       ├── history.js                     # History page logic
+│       └── admin.js                       # Admin panel logic
+│
+└── ml_models/
+    └── cnn_model.h5                       # Trained CNN model (created after training)
+*************************************************************************************
+    Forgery_detection/
+│
+├── .env                                    # Environment variables (SECRET_KEY, JWT_SECRET_KEY, ADMIN_EMAIL, ADMIN_PASSWORD)
+├── .gitignore                              # Git ignore rules
+├── README.md                               # Project documentation
+├── setup.py                                # Database initialisation script
+│
+├── Celeb-DF-v1/                           # Original dataset (NOT in git)
+│   ├── Celeb-real/                        # Real celebrity videos
+│   ├── Celeb-synthesis/                   # Fake/synthesised videos
+│   └── YouTube-real/                      # Real YouTube videos
+│
+├── processed_dataset/                      # Preprocessed frames (NOT in git)
+│   ├── train/
+│   │   ├── fake/
+│   │   └── real/
+│   ├── validation/
+│   │   ├── fake/
+│   │   └── real/
+│   └── test/
+│       ├── fake/
+│       └── real/
+│
+├── database/
+│   ├── schema.sql                         # DB schema (is_demo, force_password_change columns added)
+│   └── deepfake.db                        # SQLite database (auto-created on first run)
+│
+├── backend/
+│   ├── app.py                             # ✏️  Flask app factory; seeds hashed admin on first run;
+│   │                                      #     custom 404/405/413/500 error handlers
+│   ├── config.py                          # ✏️  Strong secret-key generation; production key validation
+│   ├── database.py                        # SQLAlchemy instance (unchanged)
+│   ├── models.py                          # ✏️  Hashed passwords (Werkzeug); is_demo field;
+│   │                                      #     force_password_change field; file_path excluded from to_dict()
+│   ├── utils.py                           # ✏️  Magic-byte MIME validation for uploads (not extension-only)
+│   │
+│   ├── auth_routes.py                     # ✏️  Password hashing; strength validation; /change-password endpoint;
+│   │                                      #     /check-token (renamed from /verify-token to avoid collision)
+│   ├── detection_routes.py                # ✏️  is_demo flag; DELETE /detection/<id>; server-side pagination;
+│   │                                      #     file_path removed from all API responses
+│   ├── admin_routes.py                    # ✏️  Merged duplicate stats endpoints; daily_activity data for chart;
+│   │                                      #     DELETE /admin/user/<id>; all tables paginated
+│   │
+│   ├── requirements.txt                   # ✏️  Added scikit-learn, tqdm, matplotlib, seaborn
+│   │
+│   ├── data_preprocessing.py              # ✏️  tqdm progress bars; CLI arguments (--celebdf-dir, --output-dir, --frames)
+│   ├── train_model.py                     # ✏️  EfficientNetB0 transfer learning; 2-phase training;
+│   │                                      #     class-weight balancing; all hyperparams as CLI args
+│   ├── evaluate_model.py                  # Model evaluation script (unchanged)
+│   │
+│   └── uploads/                           # User uploaded files (auto-created)
+│       ├── images/
+│       └── videos/
+│
+├── frontend/
+│   ├── index.html                         # Landing page (unchanged)
+│   ├── login.html                         # User login (unchanged)
+│   ├── signup.html                        # User registration (unchanged)
+│   ├── admin-login.html                   # Admin login (unchanged)
+│   ├── dashboard.html                     # User dashboard (unchanged)
+│   ├── upload.html                        # ✏️  Demo mode banner; confidence bar; detail link after analysis
+│   ├── results.html                       # Detection results detail page (unchanged)
+│   ├── history.html                       # ✏️  Server-side pagination div; total count display
+│   ├── admin-dashboard.html               # ✏️  Chart.js canvas for 7-day activity; Chart.js CDN script
+│   └── profile.html                       # 🆕  NEW – Account info + change password form;
+│                                          #         force_password_change banner
+│
+│   ├── css/
+│   │   ├── style.css                      # Main styles (unchanged)
+│   │   ├── auth.css                       # Auth page styles (unchanged)
+│   │   ├── dashboard.css                  # ✏️  Confidence bar; demo banner; demo tag; danger button;
+│   │   │                                  #     pagination controls; history card delete button
+│   │   └── admin.css                      # Admin panel styles (unchanged)
+│   │
+│   └── js/
+│       ├── config.js                      # ✏️  check-token endpoint; CHANGE_PASSWORD endpoint; API.delete() helper
+│       ├── auth.js                        # ✏️  Client-side password strength validation;
+│       │                                  #     force_password_change redirect to profile.html
+│       ├── upload.js                      # ✏️  Demo banner display; confidence bar animation;
+│       │                                  #     contextual fake/real explanation text
+│       ├── detection.js                   # Detection results logic (unchanged)
+│       ├── history.js                     # ✏️  Server-side pagination; delete detection button;
+│       │                                  #     total count display; XSS-safe HTML escaping
+│       └── admin.js                       # ✏️  Chart.js daily activity chart; paginated users & detections tables;
+│                                          #     delete user button
+│
+└── ml_models/
+    └── cnn_model.h5                       # Trained model (created after running train_model.py)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LEGEND
+  ✏️  = Modified from original
+  🆕  = New file added in this version
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+QUICK START
+───────────
+1.  python setup.py                        # create dirs + initialise DB
+2.  cd backend
+3.  pip install -r requirements.txt
+4.  python app.py                          # starts on http://localhost:5000
+    → Admin password printed ONCE on first run – change it via profile.html
+
+ML TRAINING (optional)
+───────────────────────
+1.  python data_preprocessing.py --celebdf-dir ../Celeb-DF-v1 --output-dir ../processed_dataset
+2.  python train_model.py --epochs 50 --lr 0.001
+3.  python evaluate_model.py
+
+ENVIRONMENT VARIABLES (.env)
+─────────────────────────────
+SECRET_KEY=<generate with: python -c "import secrets; print(secrets.token_hex(32))">
+JWT_SECRET_KEY=<generate with: python -c "import secrets; print(secrets.token_hex(32))">
+ADMIN_EMAIL=admin@yourdomain.com           # optional, defaults to admin@deepfake.com
+ADMIN_PASSWORD=<strong password>           # optional, auto-generated if not set

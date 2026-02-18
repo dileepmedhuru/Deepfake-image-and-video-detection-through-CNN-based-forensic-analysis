@@ -1,0 +1,37 @@
+# Web Framework
+Flask==3.0.0
+Flask-SQLAlchemy==3.1.1
+Flask-CORS==4.0.0
+Werkzeug==3.0.1
+
+# JWT
+PyJWT==2.8.0
+
+# ML / Computer Vision
+tensorflow==2.15.0
+numpy==1.26.4
+opencv-python==4.9.0.80
+pillow==10.2.0
+
+# ML helpers
+scikit-learn==1.4.0
+matplotlib==3.8.2
+seaborn==0.13.2
+
+# Progress bars
+tqdm==4.66.2
+
+# Email
+Flask-Mail==0.10.0
+
+# Rate limiting
+Flask-Limiter==3.5.0
+
+# Background scheduler (file cleanup cron)
+APScheduler==3.10.4
+
+# CSV export
+pandas==2.2.0
+
+# Environment
+python-dotenv==1.0.0

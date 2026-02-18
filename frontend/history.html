@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detection History – Deepfake Detection</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body>
+<nav class="navbar">
+    <div class="container">
+        <div class="nav-brand"><h1>🔍 Deepfake Detector</h1></div>
+        <div class="nav-links">
+            <span id="user-name" class="user-name"></span>
+            <a href="dashboard.html">Dashboard</a>
+            <a href="upload.html">New Detection</a>
+            <a href="history.html" class="active">History</a>
+            <button id="dark-toggle" onclick="DarkMode.toggle()" class="btn btn-sm" title="Toggle dark mode">🌙</button>
+            <button onclick="logout()" class="btn btn-sm">Logout</button>
+        </div>
+        <button class="hamburger" id="hamburger" onclick="toggleMobileNav()">☰</button>
+    </div>
+    <div class="mobile-nav" id="mobile-nav">
+        <a href="dashboard.html">Dashboard</a>
+        <a href="upload.html">New Detection</a>
+        <a href="history.html">History</a>
+        <a href="profile.html">Profile</a>
+        <a href="#" onclick="logout()">Logout</a>
+    </div>
+</nav>
+
+<div class="dashboard-container">
+    <div class="container">
+        <div class="dashboard-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;">
+            <div>
+                <h1>Detection History</h1>
+                <p>Total: <span id="total-count">…</span></p>
+            </div>
+            <button class="btn btn-secondary" onclick="exportCSV()">⬇️ Export CSV</button>
+        </div>
+
+        <!-- Search + filters + sort -->
+        <div class="history-toolbar">
+            <input type="text" id="search-input" class="search-input"
+                   placeholder="🔍 Search by filename…">
+            <select id="filter-type"   class="filter-select">
+                <option value="all">All Types</option>
+                <option value="image">Images</option>
+                <option value="video">Videos</option>
+            </select>
+            <select id="filter-result" class="filter-select">
+                <option value="all">All Results</option>
+                <option value="real">Real Only</option>
+                <option value="fake">Fake Only</option>
+            </select>
+            <select id="sort-by" class="filter-select">
+                <option value="date">Sort: Date</option>
+                <option value="confidence">Sort: Confidence</option>
+                <option value="result">Sort: Result</option>
+            </select>
+            <select id="sort-order" class="filter-select">
+                <option value="desc">Newest First</option>
+                <option value="asc">Oldest First</option>
+            </select>
+        </div>
+
+        <div id="history-list" class="history-list">
+            <div class="loading">Loading history…</div>
+        </div>
+        <div id="pagination" style="text-align:center;margin-top:2rem;"></div>
+    </div>
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/history.js"></script>
+<script>
+function toggleMobileNav() {
+    document.getElementById('mobile-nav').classList.toggle('open');
+}
+</script>
+</body>
+</html>

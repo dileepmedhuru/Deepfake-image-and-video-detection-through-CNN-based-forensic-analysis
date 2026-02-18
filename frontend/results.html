@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detection Results - Deepfake Detection</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <div class="nav-brand">
+                <h1>🔍 Deepfake Detector</h1>
+            </div>
+            <div class="nav-links">
+                <span id="user-name" class="user-name"></span>
+                <a href="dashboard.html">Dashboard</a>
+                <a href="upload.html">New Detection</a>
+                <a href="history.html">History</a>
+                <button onclick="logout()" class="btn btn-sm">Logout</button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="dashboard-container">
+        <div class="container">
+            <div id="loading" class="loading" style="text-align: center; padding: 3rem;">
+                Loading detection details...
+            </div>
+
+            <div id="result-details" style="display: none;">
+                <div class="dashboard-header">
+                    <h1>Detection Results</h1>
+                    <p id="file-name-display"></p>
+                </div>
+
+                <div class="results-section">
+                    <div class="result-card">
+                        <div class="result-status" id="result-status"></div>
+                        
+                        <div class="result-details">
+                            <h3>Analysis Details</h3>
+                            <div class="detail-item">
+                                <span class="label">Result:</span>
+                                <span class="value" id="result-value"></span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label">Confidence Score:</span>
+                                <span class="value" id="confidence-value"></span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label">Processing Time:</span>
+                                <span class="value" id="processing-time"></span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label">File Type:</span>
+                                <span class="value" id="file-type"></span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label">Analyzed On:</span>
+                                <span class="value" id="analyzed-on"></span>
+                            </div>
+                        </div>
+
+                        <div id="metadata-section" class="result-details" style="margin-top: 1.5rem;">
+                            <h3>Technical Metadata</h3>
+                            <div id="metadata-content"></div>
+                        </div>
+
+                        <div class="result-actions">
+                            <button class="btn btn-primary" onclick="window.location.href='history.html'">
+                                Back to History
+                            </button>
+                            <button class="btn btn-secondary" onclick="window.location.href='upload.html'">
+                                Analyze Another
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="error-section" class="error" style="display: none; text-align: center; padding: 3rem;">
+                <h2>Detection Not Found</h2>
+                <p>The requested detection could not be found.</p>
+                <button class="btn btn-primary" onclick="window.location.href='history.html'">
+                    Go to History
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/config.js"></script>
+    <script src="js/detection.js"></script>
+</body>
+</html>

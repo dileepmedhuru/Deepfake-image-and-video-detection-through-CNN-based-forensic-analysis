@@ -1,0 +1,449 @@
+/* Admin Tabs */
+.admin-tabs {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 2rem;
+    border-bottom: 2px solid #e2e8f0;
+}
+
+.admin-tabs .tab-btn {
+    padding: 1rem 2rem;
+    background: none;
+    border: none;
+    border-bottom: 3px solid transparent;
+    cursor: pointer;
+    font-size: 1rem;
+    color: #718096;
+    transition: all 0.3s;
+}
+
+.admin-tabs .tab-btn.active {
+    color: #667eea;
+    border-bottom-color: #667eea;
+    font-weight: 600;
+}
+
+.admin-tabs .tab-btn:hover:not(.active) {
+    color: #4a5568;
+}
+
+/* Tab Content */
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.tab-content h2 {
+    color: #2d3748;
+    margin-bottom: 1.5rem;
+}
+
+/* Data Table */
+.data-table {
+    background: white;
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    overflow-x: auto;
+}
+
+.admin-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 800px;
+}
+
+.admin-table thead {
+    background: #f7fafc;
+}
+
+.admin-table th {
+    padding: 1rem;
+    text-align: left;
+    font-weight: 600;
+    color: #2d3748;
+    border-bottom: 2px solid #e2e8f0;
+}
+
+.admin-table td {
+    padding: 1rem;
+    border-bottom: 1px solid #e2e8f0;
+    color: #4a5568;
+}
+
+.admin-table tbody tr:hover {
+    background: #f7fafc;
+}
+
+.admin-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* Result Badge */
+.result-badge {
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    display: inline-block;
+}
+
+.result-badge.real {
+    background: #c6f6d5;
+    color: #22543d;
+}
+
+.result-badge.fake {
+    background: #fed7d7;
+    color: #742a2a;
+}
+
+/* History Filters */
+.history-filters {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.filter-select {
+    padding: 0.75rem 1rem;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    background: white;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: border-color 0.3s;
+}
+
+.filter-select:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+/* History List */
+.history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.history-card {
+    background: white;
+    padding: 1.5rem;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    transition: transform 0.3s;
+}
+
+.history-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.history-icon {
+    font-size: 2.5rem;
+}
+
+.history-details {
+    flex: 1;
+}
+
+.history-details h3 {
+    color: #2d3748;
+    margin-bottom: 0.5rem;
+    font-size: 1.1rem;
+}
+
+.history-info {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
+}
+
+.history-info span {
+    font-size: 0.9rem;
+}
+
+.history-info .confidence,
+.history-info .time {
+    color: #718096;
+}
+
+.timestamp {
+    color: #a0aec0;
+    font-size: 0.85rem;
+}
+
+.history-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .history-filters {
+        flex-direction: column;
+    }
+    
+    .history-card {
+        flex-direction: column;
+        text-align: center;
+    }
+    
+    .history-info {
+        justify-content: center;
+    }
+    
+    .admin-tabs {
+        flex-direction: column;
+        border-bottom: none;
+    }
+    
+    .admin-tabs .tab-btn {
+        border-bottom: none;
+        border-left: 3px solid transparent;
+    }
+    
+    .admin-tabs .tab-btn.active {
+        border-left-color: #667eea;
+    }
+    
+    .data-table {
+        padding: 1rem;
+    }
+}
+
+/* ── Users summary bar ─────────────────────────────────────── */
+.users-summary {
+    padding: 0.75rem 1rem;
+    background: #f7fafc;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    color: #4a5568;
+    font-size: 0.95rem;
+}
+
+/* ── User name cell with avatar ────────────────────────────── */
+.user-name-cell {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.user-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #06b6d4, #0891b2);
+    color: white;
+    font-weight: 700;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+/* ── Role badge ────────────────────────────────────────────── */
+.role-badge {
+    padding: 0.2rem 0.75rem;
+    border-radius: 12px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    display: inline-block;
+}
+.role-badge.admin {
+    background: #fef3c7;
+    color: #92400e;
+}
+.role-badge.user {
+    background: #e0f2fe;
+    color: #075985;
+}
+
+/* ── Detection count pill ──────────────────────────────────── */
+.detection-count {
+    background: #e2e8f0;
+    color: #2d3748;
+    padding: 0.15rem 0.65rem;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+/* ── Clickable row hover ───────────────────────────────────── */
+.user-row:hover td {
+    background: #ebf8ff;
+}
+
+/* ── Modal overlay ─────────────────────────────────────────── */
+.modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+}
+
+.modal-box {
+    background: white;
+    border-radius: 16px;
+    padding: 2rem;
+    width: 100%;
+    max-width: 720px;
+    max-height: 90vh;
+    overflow-y: auto;
+    position: relative;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    animation: modalIn 0.2s ease-out;
+}
+
+@keyframes modalIn {
+    from { opacity: 0; transform: translateY(-20px) scale(0.97); }
+    to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+
+.modal-close {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    background: #f1f5f9;
+    border: none;
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+}
+.modal-close:hover { background: #e2e8f0; }
+
+/* ── Modal loading ─────────────────────────────────────────── */
+.modal-loading {
+    text-align: center;
+    padding: 3rem;
+    color: #64748b;
+}
+.modal-loading .loader {
+    border: 4px solid #e2e8f0;
+    border-top-color: #06b6d4;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 1rem;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── User detail modal content ─────────────────────────────── */
+.user-detail-modal { }
+
+.modal-user-header {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 2px solid #e2e8f0;
+}
+
+.modal-avatar {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #06b6d4, #0891b2);
+    color: white;
+    font-size: 1.8rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.modal-user-header h2 {
+    font-size: 1.5rem;
+    color: #1e293b;
+    margin-bottom: 0.25rem;
+}
+
+.modal-email a {
+    color: #06b6d4;
+    text-decoration: none;
+    font-size: 0.95rem;
+}
+.modal-email a:hover { text-decoration: underline; }
+
+/* ── Info grid ─────────────────────────────────────────────── */
+.modal-info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.modal-info-card {
+    background: #f8fafc;
+    border-radius: 10px;
+    padding: 1rem;
+    text-align: center;
+    border: 1px solid #e2e8f0;
+}
+
+.info-label {
+    color: #94a3b8;
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.4rem;
+}
+
+.info-value {
+    color: #1e293b;
+    font-size: 1rem;
+    font-weight: 700;
+}
+
+/* ── Modal section ─────────────────────────────────────────── */
+.modal-section {
+    margin-bottom: 1.5rem;
+}
+
+.modal-section h3 {
+    color: #2d3748;
+    font-size: 1.05rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+/* ── Modal actions ─────────────────────────────────────────── */
+.modal-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: flex-end;
+    padding-top: 1rem;
+    border-top: 1px solid #e2e8f0;
+}
+
+/* ── Responsive modal ──────────────────────────────────────── */
+@media (max-width: 600px) {
+    .modal-box { padding: 1.25rem; }
+    .modal-user-header { flex-direction: column; text-align: center; }
+    .modal-info-grid { grid-template-columns: 1fr 1fr; }
+    .modal-actions { flex-direction: column; }
+}

@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Profile – Deepfake Detection</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+    <link rel="stylesheet" href="css/auth.css">
+</head>
+<body>
+<nav class="navbar">
+    <div class="container">
+        <div class="nav-brand"><h1>🔍 Deepfake Detector</h1></div>
+        <div class="nav-links">
+            <span id="user-name" class="user-name"></span>
+            <a href="dashboard.html">Dashboard</a>
+            <a href="upload.html">New Detection</a>
+            <a href="history.html">History</a>
+            <a href="profile.html" class="active">Profile</a>
+            <button onclick="logout()" class="btn btn-sm">Logout</button>
+        </div>
+    </div>
+</nav>
+
+<div class="dashboard-container">
+    <div class="container" style="max-width:600px;">
+
+        <div class="dashboard-header">
+            <h1>My Profile</h1>
+            <p>View your account details and update your password</p>
+        </div>
+
+        <!-- Force-change banner -->
+        <div id="force-change-banner" class="demo-banner" style="display:none;
+             background:#fff3cd;border:1px solid #ffc107;color:#856404;
+             padding:1rem;border-radius:8px;margin-bottom:1.5rem;">
+            ⚠️ <strong>Action required:</strong> Please change your default password before
+            continuing.
+        </div>
+
+        <!-- Account info card -->
+        <div class="auth-card" style="margin-bottom:2rem;">
+            <h2 style="margin-bottom:1rem;color:#2d3748;">Account Information</h2>
+            <p><strong>Name:</strong>  <span id="profile-name">–</span></p>
+            <p><strong>Email:</strong> <span id="profile-email">–</span></p>
+            <p><strong>Role:</strong>  <span id="profile-role">–</span></p>
+            <p><strong>Member since:</strong> <span id="profile-joined">–</span></p>
+        </div>
+
+        <!-- Change password -->
+        <div class="auth-card">
+            <h2 style="margin-bottom:1.5rem;color:#2d3748;">Change Password</h2>
+
+            <div id="error-message"   class="error-message"   style="display:none;"></div>
+            <div id="success-message" class="success-message" style="display:none;"></div>
+
+            <form id="change-pw-form" class="auth-form">
+                <div class="form-group">
+                    <label for="current_password">Current Password</label>
+                    <input type="password" id="current_password" required
+                           placeholder="Enter current password">
+                </div>
+                <div class="form-group">
+                    <label for="new_password">New Password</label>
+                    <input type="password" id="new_password" required
+                           placeholder="At least 8 chars, uppercase, number, symbol">
+                    <small class="form-hint">
+                        8+ chars · uppercase · lowercase · number · special character
+                    </small>
+                </div>
+                <div class="form-group">
+                    <label for="confirm_new_password">Confirm New Password</label>
+                    <input type="password" id="confirm_new_password" required
+                           placeholder="Repeat new password">
+                </div>
+                <button type="submit" class="btn btn-primary btn-block" id="change-btn">
+                    <span id="btn-text">Update Password</span>
+                    <span id="btn-loader" class="loader" style="display:none;"></span>
+                </button>
+            </form>
+        </div>
+
+    </div>
+</div>
+
+<script src="js/config.js"></script>
+<script>
+requireAuth();
+
+const user = Storage.getUser();
+document.getElementById('user-name').textContent     = user.full_name;
+document.getElementById('profile-name').textContent  = user.full_name;
+document.getElementById('profile-email').textContent = user.email;
+document.getElementById('profile-role').textContent  = user.is_admin ? 'Admin' : 'User';
+document.getElementById('profile-joined').textContent =
+    user.created_at ? new Date(user.created_at).toLocaleDateString() : '–';
+
+if (user.force_password_change) {
+    document.getElementById('force-change-banner').style.display = 'block';
+}
+
+function showError(m)   { const e=document.getElementById('error-message');   e.textContent=m; e.style.display='block'; }
+function showSuccess(m) { const e=document.getElementById('success-message'); e.textContent=m; e.style.display='block'; }
+function hideMessages() {
+    ['error-message','success-message'].forEach(id=>{
+        const el=document.getElementById(id); if(el) el.style.display='none';
+    });
+}
+function setLoading(on) {
+    const btn=document.getElementById('change-btn');
+    const txt=document.getElementById('btn-text');
+    const ldr=document.getElementById('btn-loader');
+    if(btn) btn.disabled=on;
+    if(txt) txt.style.display=on?'none':'inline';
+    if(ldr) ldr.style.display=on?'inline-block':'none';
+}
+
+function validatePassword(p) {
+    if(p.length<8)          return 'Password must be at least 8 characters.';
+    if(!/[A-Z]/.test(p))    return 'Must contain an uppercase letter.';
+    if(!/[a-z]/.test(p))    return 'Must contain a lowercase letter.';
+    if(!/[0-9]/.test(p))    return 'Must contain a number.';
+    if(!/[!@#$%^&*(),.?":{}|<>]/.test(p)) return 'Must contain a special character.';
+    return null;
+}
+
+document.getElementById('change-pw-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    hideMessages();
+
+    const current  = document.getElementById('current_password').value;
+    const newPw    = document.getElementById('new_password').value;
+    const confirm  = document.getElementById('confirm_new_password').value;
+
+    if (newPw !== confirm) return showError('New passwords do not match.');
+    const err = validatePassword(newPw);
+    if (err) return showError(err);
+
+    setLoading(true);
+    try {
+        await API.request(API_CONFIG.ENDPOINTS.CHANGE_PASSWORD, {
+            method: 'POST',
+            body: JSON.stringify({ current_password: current, new_password: newPw }),
+        });
+        showSuccess('Password changed successfully!');
+        // Update local user object
+        const updated = { ...user, force_password_change: false };
+        Storage.setUser(updated);
+        document.getElementById('force-change-banner').style.display = 'none';
+        document.getElementById('change-pw-form').reset();
+    } catch (err) {
+        showError(err.message || 'Password change failed.');
+    } finally {
+        setLoading(false);
+    }
+});
+</script>
+</body>
+</html>

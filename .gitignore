@@ -1,0 +1,20 @@
+# Virtual environment
+venv/
+
+# Environment variables
+.env
+
+# Python cache
+__pycache__/
+
+# Processed / generated data (optional)
+processed_dataset/
+# Deepfake dataset (Celeb-DF)
+Celeb-DF-v1/
+
+backend/uploads/
+
+# Trained CNN model
+ml_models/cnn_model.h5
+
+database/deepfake.db
