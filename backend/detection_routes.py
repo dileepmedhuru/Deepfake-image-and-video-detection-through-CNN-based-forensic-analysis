@@ -19,10 +19,6 @@ def load_ml_model():
         p = str(Config.MODEL_PATH)
         if os.path.exists(p):
             ML_MODEL = load_model(p)
-            # ── Sanity-check: run a blank image through the model ──────────
-            # If the model outputs exactly 0.5 on a blank image it is likely
-            # untrained / corrupted.  We still keep it loaded but flag it so
-            # predict_image() can detect a constant-output model at runtime.
             try:
                 test_img = np.zeros((1, 224, 224, 3), dtype=np.float32)
                 test_pred = float(ML_MODEL.predict(test_img, verbose=0)[0][0])
@@ -42,25 +38,253 @@ load_ml_model()
 
 
 def _demo_prediction():
-    """
-    Realistic demo predictions that vary per call.
-    Returns result + confidence in the range 55-95.
-    """
     import random
-    # Use image-quality-based heuristics when available,
-    # otherwise return a plausible random value.
     result     = random.choice(['fake', 'real'])
     confidence = round(random.uniform(55, 95), 2)
     return result, confidence
 
 
 def _is_constant_output_model(pred_value):
+    # Only fallback if model outputs EXACTLY 0.5 (untrained model)
+    # Threshold 0.005 was too tight — legitimate uncertain predictions triggered fallback
+    return abs(pred_value - 0.5) < 0.002
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# EDITED IMAGE CLASSIFICATION LOGIC
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _forensic_suspicion_score(quality_metrics: dict) -> float:
     """
-    Return True if the model prediction is suspiciously close to 0.5,
-    which is the sign of an untrained / collapsed model.
-    We allow a small band (±0.005) to avoid false-positives.
+    Pure forensic suspicion score 0-100, independent of ML model.
+    Low score (< 20) = strong evidence of a real photograph.
+    High score (> 50) = suspicious signals present.
+    Used to veto ML false positives on genuine mobile photos.
     """
-    return abs(pred_value - 0.5) < 0.005
+    if not quality_metrics:
+        return 50.0
+    score = 0.0
+    sat_cv  = quality_metrics.get('sat_cv', 1.0)
+    sat_mean= quality_metrics.get('sat_mean', 0)
+    bly     = quality_metrics.get('blockiness', 1.0)
+    bpp     = quality_metrics.get('bytes_per_pixel', 1.0)
+
+    if sat_cv < 0.50 and sat_mean > 75:  score += 35
+    elif sat_cv < 0.60 and sat_mean > 85: score += 20
+    if bly > 1.6 and bpp < 0.08:         score += 20
+    elif bly > 1.4 and bpp < 0.16:       score += 8
+    tv = quality_metrics.get('texture_variance', 999)
+    if tv < 20:   score += 18
+    elif tv < 35: score += 8
+    nr = quality_metrics.get('noise_residual', 999)
+    if nr < 1.5:  score += 15
+    elif nr < 3.0: score += 6
+    ed = quality_metrics.get('edge_density', 0)
+    if ed > 0.20:  score += 12
+    elif ed > 0.15: score += 5
+    lv = quality_metrics.get('face_lighting_variance') or quality_metrics.get('lighting_variance', 0)
+    if lv > 45:   score += 10
+    elif lv > 35: score += 5
+    if quality_metrics.get('freq_ratio', 0) > 0.18:    score += 8
+    if quality_metrics.get('channel_imbalance', 0) > 40: score += 8
+    if quality_metrics.get('blur_score', 999) < 40:    score += 8
+    return min(100.0, score)
+
+
+def _classify_result(ml_result: str, ml_confidence: float, quality_metrics: dict) -> tuple:
+    """
+    Three-way classification with face-manipulation and AI-generation signals.
+
+    Returns (result, confidence, was_reclassified)
+    result is one of: 'real' | 'fake' | 'ai_generated'
+
+    Logic:
+    1. Check for AI-generation signals (saturation CV, blockiness) FIRST
+       → If strong AI-gen signals present: return 'ai_generated'
+    2. If ML says 'fake' but forensic score is very low (< 20):
+       → Override to REAL — model is biased (Celeb-DF trained, poor on mobile photos)
+    3. If ML says 'fake' AND confidence > 75 AND forensic score >= 20: keep 'fake'
+    4. If ML says 'real': keep 'real'
+    """
+    if quality_metrics is None:
+        return ml_result, ml_confidence, False
+
+    # ── AI-Generation check (independent of ML result) ────────────────
+    sat_cv          = quality_metrics.get('sat_cv',          1.0)
+    sat_mean        = quality_metrics.get('sat_mean',        100)
+    blockiness      = quality_metrics.get('blockiness',      1.0)
+    bytes_per_pixel = quality_metrics.get('bytes_per_pixel', 0.5)
+
+    ai_gen_score = 0
+
+    # Primary signal: saturation uniformity
+    # Raised sat_mean threshold 60→80 and tightened sat_cv 0.65→0.50
+    # to avoid false positives on night photos and indoor shots.
+    # Real AI images have VERY uniform saturation AND high colour richness.
+    if sat_cv < 0.50 and sat_mean > 75:
+        ai_gen_score += 2   # primary signal
+
+    # Supporting signal: compression pattern
+    # Lowered bytes_per_pixel threshold 0.16→0.08 to avoid flagging
+    # WhatsApp/Telegram compressed real photos (0.08–0.15 range).
+    # Only counts when BOTH blockiness is high AND file is very small.
+    if blockiness > 1.6 and bytes_per_pixel < 0.08:
+        ai_gen_score += 1   # supporting signal
+
+    # Strong AI-generation signature → flag regardless of ML verdict
+    if ai_gen_score >= 2:
+        ai_conf = round(min(92.0, 70 + (0.50 - sat_cv) * 100), 2)
+        return 'ai_generated', ai_conf, True
+
+    if ml_result == 'real':
+        # Even when ML says real, check for strong forensic evidence of manipulation.
+        # High-quality deepfakes fool the model but still leave forensic traces:
+        # very low noise (no sensor noise), extreme saturation uniformity, smooth skin.
+        forensic_score_real = _forensic_suspicion_score(quality_metrics)
+        if forensic_score_real >= 50:
+            # Strong forensic evidence overrides ML 'real' verdict
+            print(f'⚠  Forensic override: score={forensic_score_real:.0f} >= 50 '
+                  f'despite ML saying real @ {ml_confidence:.1f}% — flagging as fake')
+            return 'fake', round(min(90.0, 50 + forensic_score_real * 0.35), 2), True
+        return ml_result, ml_confidence, False
+
+    # ── ML says FAKE — apply forensic veto before accepting ───────────
+    # The model (trained on Celeb-DF v2 celebrity footage) over-detects on:
+    #   • Indian skin tones  • Mobile camera portraits  • Bokeh backgrounds
+    #   • Colorful shirts    • Outdoor bright-sky shots
+    # We use pure forensic signals as a reality check.
+
+    forensic_score = _forensic_suspicion_score(quality_metrics)
+
+    # VETO 1: Forensic score very low → no manipulation evidence → real photo
+    # This catches model bias on genuine mobile photos regardless of ML confidence
+    if forensic_score < 20:
+        real_conf = round(min(88.0, max(65.0, 92 - forensic_score * 1.4)), 2)
+        print(f'ℹ  Veto: forensic_score={forensic_score:.0f} < 20 → real photo (ML was {ml_confidence:.1f}% fake)')
+        return 'real', real_conf, True
+
+    # VETO 2: Forensic score moderate (20-35) AND ML confidence not extreme → uncertain → real
+    if forensic_score < 35 and ml_confidence < 92:
+        real_conf = round(min(82.0, max(60.0, 85 - forensic_score * 0.8)), 2)
+        print(f'ℹ  Veto: forensic_score={forensic_score:.0f} moderate, ML {ml_confidence:.1f}% → marking real')
+        return 'real', real_conf, True
+
+    # High forensic score (≥35) — there ARE real manipulation signals
+    # Check face-specific signals before confirming fake
+    has_skin_anomaly  = quality_metrics.get('texture_variance', 999) < 35
+    has_boundary_seam = quality_metrics.get('edge_density', 0) > 0.15
+    face_lv = quality_metrics.get('face_lighting_variance')
+    has_face_lighting_issue = (face_lv is not None and face_lv > 35)
+    has_eye_anomaly = (
+        quality_metrics.get('eye_symmetry_score') == 0
+        and quality_metrics.get('faces_detected', 0) > 0
+        and (has_skin_anomaly or has_boundary_seam)
+    )
+    face_manipulation_score = sum([has_skin_anomaly, has_boundary_seam,
+                                   has_face_lighting_issue, has_eye_anomaly])
+
+    if face_manipulation_score == 0 and ml_confidence < 75.0:
+        real_confidence = round(min(80.0, max(55.0, 100 - ml_confidence + 10)), 2)
+        return 'real', real_confidence, True
+
+    return ml_result, ml_confidence, False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FORENSIC RISK SCORE DIMENSIONS  (replaces confidence plot in frontend)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def compute_forensic_risk_scores(quality_metrics: dict) -> dict:
+    """
+    Compute two dedicated forensic scores:
+      deepfake_score  — face-swap / face-manipulation signals (0-100)
+      ai_gen_score    — full AI image synthesis signals (0-100)
+
+    Each score is independent. An image can score high on both
+    (AI-generated deepfake), one, or neither.
+    Brightness gate prevents dark/transition frames from inflating scores.
+    """
+    if not quality_metrics:
+        return {'deepfake_score': 0, 'ai_gen_score': 0}
+
+    brightness = quality_metrics.get('brightness', 100)
+    bright_enough = brightness > 40   # dark frames suppress noise/blur/sat signals
+
+    # ── DEEPFAKE SCORE — face manipulation signals ────────────────────
+    df = 0
+
+    tv = quality_metrics.get('texture_variance', 50)
+    if tv < 15:   df += 25
+    elif tv < 25: df += 18
+    elif tv < 35: df += 10
+    elif tv < 45: df += 4
+
+    if bright_enough:
+        nr = quality_metrics.get('noise_residual', 5)
+        if nr < 1.5:   df += 20
+        elif nr < 2.5: df += 13
+        elif nr < 3.5: df += 6
+
+    ed = quality_metrics.get('edge_density', 0)
+    if ed > 0.20:   df += 15
+    elif ed > 0.15: df += 9
+    elif ed > 0.12: df += 4
+
+    lv = quality_metrics.get('face_lighting_variance') or quality_metrics.get('lighting_variance', 0)
+    if lv > 45:   df += 15
+    elif lv > 35: df += 9
+    elif lv > 25: df += 4
+
+    fr = quality_metrics.get('freq_ratio', 0)
+    if fr > 0.18:   df += 10
+    elif fr > 0.13: df += 5
+
+    if bright_enough:
+        bs = quality_metrics.get('blur_score', 999)
+        if bs < 20:   df += 10
+        elif bs < 40: df += 6
+        elif bs < 80: df += 2
+
+    ci = quality_metrics.get('channel_imbalance', 0)
+    if ci > 40:   df += 5
+    elif ci > 25: df += 2
+
+    deepfake_score = min(100, round(df))
+
+    # ── AI-GENERATION SCORE — synthesis signals ───────────────────────
+    ai = 0
+
+    if bright_enough:
+        sat_cv   = quality_metrics.get('sat_cv', 1.0)
+        sat_mean = quality_metrics.get('sat_mean', 0)
+        if sat_cv < 0.25 and sat_mean > 100:   ai += 45
+        elif sat_cv < 0.35 and sat_mean > 80:  ai += 38
+        elif sat_cv < 0.45 and sat_mean > 75:  ai += 28
+        elif sat_cv < 0.50 and sat_mean > 70:  ai += 16
+        elif sat_cv < 0.55 and sat_mean > 85:  ai += 18
+
+    bly = quality_metrics.get('blockiness', 1.0)
+    bpp = quality_metrics.get('bytes_per_pixel', 1.0)
+    if bly > 1.6 and bpp < 0.08:    ai += 25
+    elif bly > 1.5 and bpp < 0.12:  ai += 18
+    elif bly > 1.4 and bpp < 0.16:  ai += 10
+
+    sp = quality_metrics.get('shadow_pct', 0.1)
+    hp = quality_metrics.get('highlight_pct', 0.1)
+    if sp < 0.01 and hp < 0.02:   ai += 20
+    elif sp < 0.03 and hp < 0.05: ai += 10
+
+    if bright_enough:
+        nr = quality_metrics.get('noise_residual', 5)
+        if nr < 1.5:   ai += 10
+        elif nr < 2.5: ai += 5
+
+    ai_gen_score = min(100, round(ai))
+
+    return {
+        'deepfake_score': deepfake_score,
+        'ai_gen_score':   ai_gen_score,
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -68,10 +292,6 @@ def _is_constant_output_model(pred_value):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def analyze_image_quality(image_path):
-    """
-    Compute a rich set of image quality metrics used by the forensic engine.
-    Returns a dict or None on failure.
-    """
     try:
         img = cv2.imread(image_path)
         if img is None:
@@ -81,12 +301,10 @@ def analyze_image_quality(image_path):
         gray    = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         b, g, r = cv2.split(img)
 
-        # ── Basic metrics ────────────────────────────────────────────────────
         blur_score       = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         brightness       = float(np.mean(gray))
         texture_variance = float(np.std(gray))
 
-        # ── Face detection (Haar cascade) ────────────────────────────────────
         face_cascade   = cv2.CascadeClassifier(
             cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
         )
@@ -94,71 +312,106 @@ def analyze_image_quality(image_path):
         faces_detected = len(faces)
         face_regions   = faces.tolist() if len(faces) > 0 else []
 
-        # ── Edge analysis ────────────────────────────────────────────────────
         edges        = cv2.Canny(gray, 50, 150)
         edge_density = float(np.sum(edges > 0) / edges.size)
 
-        # ── Colour channel analysis ──────────────────────────────────────────
         channel_stds      = [float(np.std(b)), float(np.std(g)), float(np.std(r))]
         color_consistency = float(np.mean(channel_stds))
-        # Channel imbalance: large difference between channels = possible splice
         channel_imbalance = float(max(channel_stds) - min(channel_stds))
 
-        # ── Frequency / compression analysis ────────────────────────────────
-        # Resize to safe even size for DCT
         dct_gray         = cv2.resize(gray, (224, 224))
         dct              = cv2.dct(np.float32(dct_gray))
         high_freq_energy = float(np.sum(np.abs(dct[112:, 112:])))
-        # Ratio of high-freq to total energy (0–1)
         total_energy     = float(np.sum(np.abs(dct)) + 1e-9)
         freq_ratio       = round(high_freq_energy / total_energy, 4)
 
-        # ── Noise analysis (residual after Gaussian smoothing) ───────────────
-        smoothed      = cv2.GaussianBlur(gray, (5, 5), 0)
+        smoothed       = cv2.GaussianBlur(gray, (5, 5), 0)
         noise_residual = float(np.std(gray.astype(np.float32) - smoothed.astype(np.float32)))
 
-        # ── Local texture entropy (Shannon) ──────────────────────────────────
-        hist          = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
-        hist_norm     = hist / (hist.sum() + 1e-9)
-        entropy       = float(-np.sum(hist_norm * np.log2(hist_norm + 1e-9)))
+        hist       = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
+        hist_norm  = hist / (hist.sum() + 1e-9)
+        entropy    = float(-np.sum(hist_norm * np.log2(hist_norm + 1e-9)))
 
-        # ── Skin-tone region analysis (for faces) ────────────────────────────
-        # Convert to YCrCb and check skin-pixel ratio
         ycrcb      = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
         skin_mask  = cv2.inRange(ycrcb, (0, 133, 77), (255, 173, 127))
         skin_ratio = float(np.sum(skin_mask > 0) / (h * w))
 
-        # ── Local Binary Pattern roughness (texture regularity) ──────────────
-        # Simplified version: std of local gradient magnitudes
         sobelx  = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
         sobely  = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
         grad_mag = np.sqrt(sobelx**2 + sobely**2)
         grad_std = float(np.std(grad_mag))
 
-        # ── Lighting consistency (illumination gradient check) ───────────────
-        # Divide image into quadrants and compare brightness
-        mid_h, mid_w       = h // 2, w // 2
-        quadrant_means     = [
+        mid_h, mid_w   = h // 2, w // 2
+        quadrant_means = [
             float(np.mean(gray[:mid_h, :mid_w])),
             float(np.mean(gray[:mid_h, mid_w:])),
             float(np.mean(gray[mid_h:, :mid_w])),
             float(np.mean(gray[mid_h:, mid_w:])),
         ]
-        lighting_variance  = float(np.std(quadrant_means))
+        lighting_variance = float(np.std(quadrant_means))
 
-        # ── Eye-region blink anomaly proxy ───────────────────────────────────
-        # Look for eyes inside face regions using eye cascade
-        eye_symmetry_score = None
+        # ── Face-region lighting variance (much more accurate than full-image) ──
+        # Full-image lighting variance is misleading for outdoor photos:
+        # bright sky vs dark ground creates natural variance that looks
+        # "suspicious" but is completely normal (e.g. golden hour, outdoor shots).
+        # We compute lighting variance INSIDE the largest face bounding box only.
+        face_lighting_variance = None
+        eye_symmetry_score     = None
+
         if faces_detected > 0:
             eye_cascade = cv2.CascadeClassifier(
                 cv2.data.haarcascades + 'haarcascade_eye.xml'
             )
-            fx, fy, fw, fh = faces[0]
-            face_roi       = gray[fy:fy+fh, fx:fx+fw]
-            eyes           = eye_cascade.detectMultiScale(face_roi, 1.1, 5)
-            num_eyes       = len(eyes)
-            # Ideal = 2 eyes; 0 = closed/obstructed; 1 = asymmetric
-            eye_symmetry_score = int(num_eyes)
+            # Use the largest face for all per-face metrics
+            largest_face = max(faces, key=lambda f: f[2] * f[3])
+            fx, fy, fw, fh = largest_face
+            face_roi = gray[fy:fy+fh, fx:fx+fw]
+
+            # Face-region lighting variance
+            rh, rw = face_roi.shape
+            if rh >= 4 and rw >= 4:
+                mfh, mfw = rh // 2, rw // 2
+                fq = [
+                    float(np.mean(face_roi[:mfh, :mfw])),
+                    float(np.mean(face_roi[:mfh, mfw:])),
+                    float(np.mean(face_roi[mfh:, :mfw])),
+                    float(np.mean(face_roi[mfh:, mfw:])),
+                ]
+                face_lighting_variance = round(float(np.std(fq)), 2)
+
+            eyes = eye_cascade.detectMultiScale(face_roi, 1.1, 5)
+            eye_symmetry_score = int(len(eyes))
+
+        # ── AI-generation specific metrics ─────────────────────────────
+        # Modern AI generators (Midjourney/SDXL/Gemini) fool traditional
+        # forensic checks but leave these measurable signatures:
+
+        # 1. Saturation uniformity — AI artificially boosts saturation uniformly
+        # Real photos: natural variation (sat_cv > 0.65). AI: low CV < 0.65
+        hsv         = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        sat_channel = hsv[:, :, 1].astype(np.float32)
+        sat_mean    = float(np.mean(sat_channel))
+        sat_cv      = float(np.std(sat_channel) / (sat_mean + 1e-9))
+
+        # 2. JPEG blockiness (proxy for compression quality)
+        # AI outputs saved at 50-75% quality → blockiness ratio > 1.4
+        block_diffs = []
+        for bi in range(8, h - 8, 8):
+            row_diff = float(np.mean(np.abs(
+                gray[bi, :].astype(float) - gray[bi-1, :].astype(float)
+            )))
+            inter = float(np.mean(np.abs(
+                gray[bi-1, :].astype(float) - gray[bi-2, :].astype(float)
+            )))
+            block_diffs.append(row_diff / (inter + 0.1))
+        blockiness = float(np.mean(block_diffs)) if block_diffs else 1.0
+
+        # 3. Tonal distribution (AI "cinematic" colour grading)
+        shadow_pct    = float(np.sum(hist[:30]))  / (h * w)
+        highlight_pct = float(np.sum(hist[220:])) / (h * w)
+
+        # 4. Bytes per pixel
+        bytes_per_pixel = float(os.path.getsize(image_path)) / (h * w + 1e-9)
 
         return {
             'blur_score':           round(blur_score,        2),
@@ -175,10 +428,18 @@ def analyze_image_quality(image_path):
             'entropy':              round(entropy,           3),
             'skin_ratio':           round(skin_ratio,        4),
             'grad_std':             round(grad_std,          2),
-            'lighting_variance':    round(lighting_variance, 2),
-            'eye_symmetry_score':   eye_symmetry_score,
+            'lighting_variance':      round(lighting_variance, 2),
+            'face_lighting_variance': face_lighting_variance,
+            'eye_symmetry_score':     eye_symmetry_score,
             'file_size_mb':         round(os.path.getsize(image_path) / (1024*1024), 2),
             'resolution':           f'{w}x{h}',
+            # AI-generation signals
+            'sat_mean':             round(sat_mean,          2),
+            'sat_cv':               round(sat_cv,            4),
+            'blockiness':           round(blockiness,        4),
+            'shadow_pct':           round(shadow_pct,        4),
+            'highlight_pct':        round(highlight_pct,     4),
+            'bytes_per_pixel':      round(bytes_per_pixel,   5),
         }
     except Exception as e:
         print(f'Quality analysis error: {e}')
@@ -187,79 +448,104 @@ def analyze_image_quality(image_path):
 
 def _heuristic_confidence(quality_metrics):
     """
-    When the ML model is unavailable or broken, compute a plausible
-    confidence score from image quality metrics.
-    Returns (result, confidence).
+    Forensic heuristic used when ML model is unavailable or outputs near-0.5.
+    Scores suspiciousness 0-100; >=50 = fake/ai_generated.
+    Uses all available forensic signals including AI-generation indicators.
     """
     import random
     if quality_metrics is None:
         return _demo_prediction()
 
-    score = 50.0
+    score = 0.0   # start at 0, build up evidence
 
-    if quality_metrics['blur_score'] < 50:   score += 15
-    elif quality_metrics['blur_score'] < 150: score += 5
+    # ── AI-generation signals (strongest indicators) ──────────────────
+    sat_cv          = quality_metrics.get('sat_cv', 1.0)
+    sat_mean        = quality_metrics.get('sat_mean', 0)
+    blockiness      = quality_metrics.get('blockiness', 1.0)
+    bytes_per_pixel = quality_metrics.get('bytes_per_pixel', 1.0)
 
-    if quality_metrics['texture_variance'] < 25:  score += 12
-    elif quality_metrics['texture_variance'] < 40: score += 4
+    if sat_cv < 0.50 and sat_mean > 75:
+        score += 35   # very strong AI signal
+    elif sat_cv < 0.60 and sat_mean > 85:
+        score += 20   # moderate AI signal
 
-    if quality_metrics['compression_artifacts'] > 80: score += 8
-    if quality_metrics['freq_ratio'] > 0.15:          score += 6
-    if quality_metrics['noise_residual'] < 2.0:       score += 8
-    if quality_metrics['channel_imbalance'] > 30:     score += 7
-    if quality_metrics['lighting_variance'] > 25:     score += 6
+    if blockiness > 1.6 and bytes_per_pixel < 0.08:
+        score += 20   # AI compression pattern
+    elif blockiness > 1.4 and bytes_per_pixel < 0.16:
+        score += 8    # mild compression signal
 
-    if quality_metrics['edge_density'] > 0.18: score += 10
-    elif quality_metrics['edge_density'] > 0.12: score += 4
+    # ── Deepfake / manipulation signals ───────────────────────────────
+    if quality_metrics.get('texture_variance', 999) < 20:
+        score += 18
+    elif quality_metrics.get('texture_variance', 999) < 35:
+        score += 8
 
-    score += random.uniform(-6, 6)
-    score  = max(10.0, min(97.0, score))
+    if quality_metrics.get('noise_residual', 999) < 1.5:
+        score += 15
+    elif quality_metrics.get('noise_residual', 999) < 3.0:
+        score += 6
 
-    result = 'fake' if score >= 50 else 'real'
-    if result == 'real':
-        confidence = round(max(10.0, min(97.0, 100.0 - score + random.uniform(0, 8))), 2)
+    if quality_metrics.get('edge_density', 0) > 0.20:
+        score += 12
+    elif quality_metrics.get('edge_density', 0) > 0.15:
+        score += 5
+
+    lv = quality_metrics.get('face_lighting_variance') or quality_metrics.get('lighting_variance', 0)
+    if lv > 45:
+        score += 10
+    elif lv > 35:
+        score += 5
+
+    if quality_metrics.get('freq_ratio', 0) > 0.18:
+        score += 8
+    if quality_metrics.get('channel_imbalance', 0) > 40:
+        score += 8
+    if quality_metrics.get('blur_score', 999) < 40:
+        score += 8
+
+    # Small random jitter ±4 to avoid exact repeats
+    score += random.uniform(-4, 4)
+    score  = max(0.0, min(100.0, score))
+
+    if score >= 50:
+        result     = 'fake'
+        confidence = round(min(97.0, 50 + score * 0.47), 2)
     else:
-        confidence = round(score, 2)
+        result     = 'real'
+        confidence = round(max(55.0, min(92.0, 92 - score * 0.74)), 2)
 
     return result, confidence
 
 
-# ── Icon map for forensic clue types ─────────────────────────────────────────
+# ── Clue icon map ─────────────────────────────────────────────────────────
 _CLUE_ICONS = {
-    'skin_texture':      '🧬',
-    'boundary':          '🔲',
-    'lighting':          '💡',
-    'compression':       '📦',
-    'noise':             '📡',
-    'frequency':         '🌊',
-    'eye_anomaly':       '👁️',
-    'color_splice':      '🎨',
-    'no_face':           '👤',
-    'multiple_faces':    '👥',
-    'blur':              '🌫️',
-    'entropy':           '🔀',
-    'resolution':        '📐',
+    'skin_texture':   '🧬',
+    'boundary':       '🔲',
+    'lighting':       '💡',
+    'compression':    '📦',
+    'noise':          '📡',
+    'frequency':      '🌊',
+    'eye_anomaly':    '👁️',
+    'color_splice':   '🎨',
+    'blur':           '🌫️',
+    'entropy':        '🔀',
+    'resolution':     '📐',
 }
+
 
 def run_forensic_analysis(quality_metrics, result, confidence):
     """
-    Full forensic analysis engine.
-    Returns a list of forensic clue dicts, each with:
-      - clue_type   : string key
-      - icon        : emoji
-      - severity    : 'critical' | 'warning' | 'info'
-      - title       : short display title
-      - description : one-sentence explanation
-      - evidence    : measured value shown to user (e.g. "blur=23.4")
-      - technical   : optional technical detail
+    Forensic clue engine.
+    NOTE: face-count clues (no_face / multiple_faces) intentionally removed.
+    Returns list of forensic clue dicts.
     """
     if not quality_metrics:
         return []
 
-    clues = []
+    clues   = []
     is_fake = (result == 'fake')
 
-    # ── 1. Skin Texture Abnormality ───────────────────────────────────────────
+    # 1. Skin Texture
     tv = quality_metrics['texture_variance']
     if tv < 20:
         clues.append({
@@ -267,7 +553,7 @@ def run_forensic_analysis(quality_metrics, result, confidence):
             'icon':        _CLUE_ICONS['skin_texture'],
             'severity':    'critical',
             'title':       'Abnormal Skin Texture',
-            'description': 'Texture variance is extremely low — a strong indicator of AI-generated '
+            'description': 'Texture variance is extremely low — strong indicator of AI-generated '
                            'skin smoothing, characteristic of GAN-based deepfake models.',
             'evidence':    f'Texture variance: {tv:.1f} (threshold < 20)',
             'technical':   'GANs typically produce skin with unnaturally uniform pixel distributions.',
@@ -278,13 +564,13 @@ def run_forensic_analysis(quality_metrics, result, confidence):
             'icon':        _CLUE_ICONS['skin_texture'],
             'severity':    'warning',
             'title':       'Suspicious Skin Smoothness',
-            'description': 'Texture variance is below normal range, suggesting possible AI skin '
+            'description': 'Texture variance below normal range, suggesting possible AI skin '
                            'smoothing or heavy post-processing.',
             'evidence':    f'Texture variance: {tv:.1f} (normal range > 35)',
             'technical':   'Real facial photographs have measurable pore-level texture noise.',
         })
 
-    # ── 2. Face Boundary / Blending Artefacts ────────────────────────────────
+    # 2. Face Boundary Artifacts
     ed = quality_metrics['edge_density']
     if ed > 0.20 and is_fake:
         clues.append({
@@ -303,39 +589,43 @@ def run_forensic_analysis(quality_metrics, result, confidence):
             'icon':        _CLUE_ICONS['boundary'],
             'severity':    'warning',
             'title':       'Possible Boundary Inconsistency',
-            'description': 'Elevated edge density may indicate incomplete blending at face or object boundaries.',
+            'description': 'Elevated edge density may indicate incomplete blending at face boundaries.',
             'evidence':    f'Edge density: {ed:.4f} (normal < 0.15)',
             'technical':   'Blending masks in deepfake pipelines rarely achieve perfect frequency matching.',
         })
 
-    # ── 3. Lighting / Illumination Mismatch ──────────────────────────────────
-    lv = quality_metrics['lighting_variance']
-    if lv > 35:
+    # 3. Lighting Mismatch — use face-region variance, not full-image
+    # Full-image variance is naturally high for outdoor photos (sky vs ground)
+    lv = quality_metrics.get('face_lighting_variance') or quality_metrics['lighting_variance']
+    # Only flag if face-specific lighting mismatch (threshold raised accordingly)
+    lv_threshold_critical = 45
+    lv_threshold_warning  = 35
+    if lv > lv_threshold_critical:
         clues.append({
             'clue_type':   'lighting',
             'icon':        _CLUE_ICONS['lighting'],
             'severity':    'critical' if is_fake else 'warning',
-            'title':       'Inconsistent Illumination',
-            'description': 'Significant brightness variation across image quadrants suggests '
-                           'the subject was lit differently from the background — a common '
-                           'sign of composited or face-swapped content.',
-            'evidence':    f'Lighting variance across quadrants: {lv:.1f} (threshold > 35)',
+            'title':       'Inconsistent Face Illumination',
+            'description': 'Significant brightness variation within the face region suggests '
+                           'the face was lit differently from the background — a common sign '
+                           'of a composited or face-swapped image.',
+            'evidence':    f'Face lighting variance: {lv:.1f} (threshold > {lv_threshold_critical})',
             'technical':   'Real photographs show natural illumination falloff; composites often '
                            'show mismatched light direction or temperature.',
         })
-    elif lv > 20 and is_fake:
+    elif lv > lv_threshold_warning and is_fake:
         clues.append({
             'clue_type':   'lighting',
             'icon':        _CLUE_ICONS['lighting'],
             'severity':    'warning',
-            'title':       'Mild Lighting Inconsistency',
-            'description': 'Uneven illumination detected across image regions — may indicate '
+            'title':       'Mild Face Lighting Inconsistency',
+            'description': 'Uneven illumination detected within face region — may indicate '
                            'imperfect relighting after face replacement.',
-            'evidence':    f'Lighting variance: {lv:.1f}',
+            'evidence':    f'Face lighting variance: {lv:.1f} (threshold > {lv_threshold_warning})',
             'technical':   'Many deepfake models lack 3D-aware relighting, causing subtle mismatches.',
         })
 
-    # ── 4. Compression / Re-encoding Artifacts ───────────────────────────────
+    # 4. Compression / Re-encoding
     ca = quality_metrics['compression_artifacts']
     fr = quality_metrics['freq_ratio']
     if fr > 0.18 and confidence > 70:
@@ -345,11 +635,10 @@ def run_forensic_analysis(quality_metrics, result, confidence):
             'severity':    'warning',
             'title':       'JPEG Re-encoding Artifacts',
             'description': 'High-frequency DCT energy pattern suggests the image has been '
-                           're-encoded multiple times — a common trace left when manipulated '
-                           'images are saved and re-saved.',
+                           're-encoded multiple times — a trace left when manipulated images '
+                           'are saved and re-saved.',
             'evidence':    f'High-freq energy ratio: {fr:.4f} (threshold > 0.18)',
-            'technical':   'Each JPEG encode-decode cycle degrades different frequency bands, '
-                           'creating double-compression fingerprints detectable via DCT analysis.',
+            'technical':   'Each JPEG encode-decode cycle degrades different frequency bands.',
         })
     elif ca > 80:
         clues.append({
@@ -360,10 +649,10 @@ def run_forensic_analysis(quality_metrics, result, confidence):
             'description': 'Strong JPEG compression may mask or introduce visual artefacts '
                            'that affect detection accuracy.',
             'evidence':    f'Compression energy: {ca:.1f}',
-            'technical':   'Lossy compression reduces detection reliability for both real and fake images.',
+            'technical':   'Lossy compression reduces detection reliability.',
         })
 
-    # ── 5. Noise Residual Anomaly ─────────────────────────────────────────────
+    # 5. Noise Residual
     nr = quality_metrics['noise_residual']
     if nr < 1.5 and is_fake:
         clues.append({
@@ -371,9 +660,8 @@ def run_forensic_analysis(quality_metrics, result, confidence):
             'icon':        _CLUE_ICONS['noise'],
             'severity':    'critical',
             'title':       'Unnatural Noise Pattern',
-            'description': 'Extremely low noise residual indicates the image may have been '
-                           'synthetically generated. Real camera sensors always introduce '
-                           'measurable photon shot noise even in clean conditions.',
+            'description': 'Extremely low noise residual — the image may have been synthetically '
+                           'generated. Real camera sensors always introduce measurable photon noise.',
             'evidence':    f'Noise residual: {nr:.3f} (real images typically > 2.0)',
             'technical':   'GAN-generated images lack authentic camera sensor noise (PRNU) patterns.',
         })
@@ -389,7 +677,7 @@ def run_forensic_analysis(quality_metrics, result, confidence):
             'technical':   'Photo Response Non-Uniformity (PRNU) analysis can confirm camera source.',
         })
 
-    # ── 6. Colour Channel Splice ──────────────────────────────────────────────
+    # 6. Colour Channel Splice
     ci = quality_metrics['channel_imbalance']
     if ci > 40 and is_fake:
         clues.append({
@@ -398,28 +686,26 @@ def run_forensic_analysis(quality_metrics, result, confidence):
             'severity':    'warning',
             'title':       'Colour Channel Imbalance',
             'description': 'Large spread between RGB channel standard deviations suggests '
-                           'regions from different source images with different colour profiles '
-                           'have been composited together.',
+                           'regions from different source images have been composited.',
             'evidence':    f'Channel imbalance: {ci:.1f} (threshold > 40)',
-            'technical':   'Spliced images from different cameras or colour spaces show '
-                           'mismatched chromatic noise in individual channels.',
+            'technical':   'Spliced images from different cameras show mismatched chromatic noise.',
         })
 
-    # ── 7. Eye Anomaly / Blink Pattern ───────────────────────────────────────
+    # 7. Eye Anomaly (kept — it IS a face manipulation signal)
     eyes = quality_metrics.get('eye_symmetry_score')
     if eyes is not None:
-        if eyes == 0 and quality_metrics['faces_detected'] > 0:
+        # Only flag eye anomaly when exactly 1 face detected (not 0, not 4)
+        # Multiple face detections usually means background false positives
+        if eyes == 0 and quality_metrics['faces_detected'] == 1:
             clues.append({
                 'clue_type':   'eye_anomaly',
                 'icon':        _CLUE_ICONS['eye_anomaly'],
                 'severity':    'warning',
                 'title':       'Eye Region Anomaly',
                 'description': 'No eyes detected within the face region. Deepfake models '
-                               'frequently distort or fail to reconstruct the periocular '
-                               'region accurately, causing eye detection to fail.',
+                               'frequently distort or fail to reconstruct the periocular region.',
                 'evidence':    f'Eyes detected in face region: {eyes} (expected 2)',
-                'technical':   'Eye blink temporal patterns and sclera reflections are '
-                               'common failure points for generative models.',
+                'technical':   'Eye blink temporal patterns are common failure points for generative models.',
             })
         elif eyes == 1 and is_fake:
             clues.append({
@@ -427,14 +713,13 @@ def run_forensic_analysis(quality_metrics, result, confidence):
                 'icon':        _CLUE_ICONS['eye_anomaly'],
                 'severity':    'info',
                 'title':       'Asymmetric Eye Detection',
-                'description': 'Only one eye was detected in the face region. This may indicate '
-                               'facial asymmetry introduced by deepfake generation or pose-dependent '
-                               'reconstruction failure.',
+                'description': 'Only one eye detected — may indicate facial asymmetry from '
+                               'deepfake generation or pose-dependent reconstruction failure.',
                 'evidence':    f'Eyes detected: {eyes} of expected 2',
-                'technical':   'Temporal inconsistency in eye regions is a key forensic marker for video deepfakes.',
+                'technical':   'Temporal inconsistency in eye regions is a key forensic marker.',
             })
 
-    # ── 8. Frequency Spectrum Anomaly ─────────────────────────────────────────
+    # 8. Frequency Suppression
     if fr < 0.05 and is_fake:
         clues.append({
             'clue_type':   'frequency',
@@ -442,39 +727,13 @@ def run_forensic_analysis(quality_metrics, result, confidence):
             'severity':    'warning',
             'title':       'Suppressed High-Frequency Detail',
             'description': 'Unusually low high-frequency energy suggests over-smoothing by a '
-                           'generative model — real photographs retain fine texture detail in '
-                           'the frequency domain that is absent here.',
+                           'generative model — real photographs retain fine texture in the '
+                           'frequency domain.',
             'evidence':    f'High-freq energy ratio: {fr:.4f} (real images typically > 0.08)',
             'technical':   'Upsampling layers in GAN decoders often blur high-frequency bands.',
         })
 
-    # ── 9. Face Count Anomalies ───────────────────────────────────────────────
-    fd = quality_metrics['faces_detected']
-    if fd == 0 and is_fake:
-        clues.append({
-            'clue_type':   'no_face',
-            'icon':        _CLUE_ICONS['no_face'],
-            'severity':    'warning',
-            'title':       'No Face Detected',
-            'description': 'The model flagged this as manipulated but no face was found. '
-                           'This may indicate a synthetic background, object-level manipulation, '
-                           'or the face is occluded/at an unusual angle.',
-            'evidence':    'Faces detected: 0',
-            'technical':   'Face-agnostic manipulation detectors may trigger on background synthesis.',
-        })
-    elif fd > 1:
-        clues.append({
-            'clue_type':   'multiple_faces',
-            'icon':        _CLUE_ICONS['multiple_faces'],
-            'severity':    'info',
-            'title':       f'{fd} Faces Detected',
-            'description': f'Multiple faces ({fd}) found. Analysis covers the full image; '
-                           'individual face-level assessment was not performed.',
-            'evidence':    f'Faces detected: {fd}',
-            'technical':   'Per-face analysis would improve accuracy when multiple subjects are present.',
-        })
-
-    # ── 10. Blur artefact ─────────────────────────────────────────────────────
+    # 9. Blur Artifact
     bs = quality_metrics['blur_score']
     if bs < 40 and is_fake:
         clues.append({
@@ -482,11 +741,68 @@ def run_forensic_analysis(quality_metrics, result, confidence):
             'icon':        _CLUE_ICONS['blur'],
             'severity':    'warning',
             'title':       'Artificial Blurring',
-            'description': 'Laplacian variance is very low, indicating uniform blurring that '
-                           'is inconsistent with natural camera optics — likely applied to '
+            'description': 'Laplacian variance is very low, indicating uniform blurring '
+                           'inconsistent with natural camera optics — likely applied to '
                            'conceal manipulation traces.',
             'evidence':    f'Blur score (Laplacian var): {bs:.1f} (threshold < 40)',
             'technical':   'Natural lens blur produces non-uniform bokeh; AI smoothing is spatially uniform.',
+        })
+
+    # ── AI-GENERATION SPECIFIC CLUES ─────────────────────────────────────
+    # These clues fire regardless of deepfake verdict — they indicate
+    # AI-synthesised content (Midjourney, SDXL, Gemini, DALL-E 3) rather
+    # than camera-captured photography.
+
+    # 10. Saturation Uniformity (most reliable AI-gen signal)
+    sat_cv   = quality_metrics.get('sat_cv',   1.0)
+    sat_mean = quality_metrics.get('sat_mean', 100)
+    if sat_cv < 0.50 and sat_mean > 75:
+        severity = 'critical' if sat_cv < 0.35 else 'warning'
+        clues.append({
+            'clue_type':   'ai_generated',
+            'icon':        '🤖',
+            'severity':    severity,
+            'title':       'AI Saturation Signature',
+            'description': 'Colour saturation is unnaturally high and uniform across the image. '
+                           'Real photographs show natural saturation variation; AI generators '
+                           'apply stylised colour enhancement producing a "too perfect" palette.',
+            'evidence':    f'Saturation CV={sat_cv:.3f} (real photos > 0.65), mean={sat_mean:.0f}/255',
+            'technical':   'Midjourney, SDXL and Gemini image models apply learned colour grading '
+                           'that consistently produces low saturation coefficient of variation.',
+        })
+
+    # 11. Compression Quality Mismatch (AI images downloaded/shared at low quality)
+    blockiness     = quality_metrics.get('blockiness',     1.0)
+    bytes_per_pixel = quality_metrics.get('bytes_per_pixel', 0.5)
+    if blockiness > 1.4 and bytes_per_pixel < 0.16:
+        clues.append({
+            'clue_type':   'ai_generated',
+            'icon':        '🤖',
+            'severity':    'warning',
+            'title':       'AI Output Compression Pattern',
+            'description': 'High JPEG blockiness combined with low file size per pixel suggests '
+                           'the image was generated by an AI tool then saved at reduced quality — '
+                           'a very common pattern for AI-generated images shared on social media.',
+            'evidence':    f'Blockiness ratio={blockiness:.2f} (>1.4 suspicious), bytes/pixel={bytes_per_pixel:.4f} (<0.16)',
+            'technical':   'AI generator outputs are typically saved at 70-80% JPEG quality before '
+                           'distribution, and further compressed by WhatsApp/Telegram to ~50-60%.',
+        })
+
+    # 12. Cinematic Tonal Compression (AI "artistic" look)
+    shadow_pct    = quality_metrics.get('shadow_pct',    0.1)
+    highlight_pct = quality_metrics.get('highlight_pct', 0.1)
+    if shadow_pct < 0.01 and highlight_pct < 0.02:
+        clues.append({
+            'clue_type':   'ai_generated',
+            'icon':        '🤖',
+            'severity':    'info',
+            'title':       'Cinematic Tonal Range',
+            'description': 'The image has almost no true shadows or highlights — the tonal range '
+                           'is compressed into the midtones. This "cinematic" look is a hallmark '
+                           'of AI image generators trained on professionally edited stock photos.',
+            'evidence':    f'Shadow pixels: {shadow_pct*100:.1f}% (<1%), Highlights: {highlight_pct*100:.1f}% (<2%)',
+            'technical':   'AI training datasets are biased toward well-exposed, post-processed images, '
+                           'causing the model to reproduce compressed tonal distributions.',
         })
 
     return clues
@@ -494,100 +810,197 @@ def run_forensic_analysis(quality_metrics, result, confidence):
 
 def predict_image(image_path):
     start = time.time()
-
     quality_metrics = analyze_image_quality(image_path)
 
-    # ── No model loaded → heuristic fallback ──────────────────────────────
+    # No model → heuristic fallback
     if ML_MODEL is None:
         r, c = _heuristic_confidence(quality_metrics)
-        artifacts = run_forensic_analysis(quality_metrics, r, c) if quality_metrics else []
-        return r, c, round(time.time() - start, 2), True, quality_metrics, artifacts
+        # Apply edited-image override
+        r, c, reclassified = _classify_result(r, c, quality_metrics)
+        risk_scores = compute_forensic_risk_scores(quality_metrics)
+        artifacts   = run_forensic_analysis(quality_metrics, r, c) if quality_metrics else []
+        return r, c, round(time.time() - start, 2), True, quality_metrics, artifacts, risk_scores
 
-    # ── Model is loaded → run inference ───────────────────────────────────
+    # Model loaded → run inference
     try:
-        img = cv2.imread(image_path)
-        img = cv2.resize(img, (224, 224))
+        img_bgr = cv2.imread(image_path)
+        if img_bgr is None:
+            raise ValueError(f"Cannot read image: {image_path}")
+
+        # Apply face crop — matches training preprocessing (face-cropped 224x224 frames)
+        # Without this, full-image resize produces predictions near 0.5 → heuristic fallback
+        gray_inf = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        fc_inf   = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        faces_inf = fc_inf.detectMultiScale(gray_inf, 1.1, 4, minSize=(40, 40))
+        if len(faces_inf) > 0:
+            x, y, w, h  = max(faces_inf, key=lambda f: f[2]*f[3])
+            pad_x = int(w * 0.30); pad_y = int(h * 0.30)
+            x1 = max(0, x-pad_x); y1 = max(0, y-pad_y)
+            x2 = min(img_bgr.shape[1], x+w+pad_x); y2 = min(img_bgr.shape[0], y+h+pad_y)
+            img_crop = img_bgr[y1:y2, x1:x2]
+        else:
+            # No face detected — use centre crop (same fallback as training)
+            h_i, w_i = img_bgr.shape[:2]
+            margin   = min(h_i, w_i) // 4
+            img_crop = img_bgr[margin:h_i-margin, margin:w_i-margin]
+
+        img = cv2.resize(img_crop, (224, 224))
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        # ── CRITICAL: This is EfficientNetB0 with its own internal Rescaling
-        # and Normalization layers. It expects RAW pixel values 0-255 (float32).
-        # Do NOT divide by 255 — the model's first layers do all normalisation.
-        img = img.astype(np.float32)          # keep values in [0, 255]
+        img = img.astype(np.float32)   # raw 0-255 for EfficientNet internal rescaling
         img = np.expand_dims(img, 0)
 
         pred = float(ML_MODEL.predict(img, verbose=0)[0][0])
+        print(f'🔍 DEBUG predict_image: raw pred={pred:.6f}, face_detected={len(faces_inf) > 0}')
 
-        # ── Detect broken / untrained model ───────────────────────────────
-        # A well-trained model almost never outputs exactly 0.5.
-        # If it does, fall back to the heuristic so the UI shows
-        # a meaningful value rather than a useless 50.0.
         if _is_constant_output_model(pred):
-            print(f'⚠  Model returned pred={pred:.4f} (near 0.5) — '
-                  f'using heuristic fallback for {os.path.basename(image_path)}')
+            print(f'⚠  Model returned pred={pred:.4f} (near 0.5) — using heuristic fallback')
             r, c = _heuristic_confidence(quality_metrics)
-            artifacts = run_forensic_analysis(quality_metrics, r, c) if quality_metrics else []
-            # Mark as demo=True so the banner shows
-            return r, c, round(time.time() - start, 2), True, quality_metrics, artifacts
+            r, c, reclassified = _classify_result(r, c, quality_metrics)
+            risk_scores = compute_forensic_risk_scores(quality_metrics)
+            artifacts   = run_forensic_analysis(quality_metrics, r, c) if quality_metrics else []
+            return r, c, round(time.time() - start, 2), True, quality_metrics, artifacts, risk_scores
 
-        # Normal model output
+        # Class mapping: fake=0, real=1 (alphabetical folder order)
+        # pred close to 0.0 = confident FAKE
+        # pred close to 1.0 = confident REAL
         if pred > 0.5:
-            r, c = 'fake', round(pred * 100, 2)
+            r, c = 'real', round(pred * 100, 2)
         else:
-            r, c = 'real', round((1.0 - pred) * 100, 2)
+            r, c = 'fake', round((1.0 - pred) * 100, 2)
 
-        artifacts = run_forensic_analysis(quality_metrics, r, c) if quality_metrics else []
-        return r, c, round(time.time() - start, 2), False, quality_metrics, artifacts
+        # Apply edited-image override
+        r, c, reclassified = _classify_result(r, c, quality_metrics)
+        if reclassified:
+            print(f'ℹ  Reclassified as authentic (edited image, no face manipulation signals)')
+
+        risk_scores = compute_forensic_risk_scores(quality_metrics)
+        artifacts   = run_forensic_analysis(quality_metrics, r, c) if quality_metrics else []
+        return r, c, round(time.time() - start, 2), False, quality_metrics, artifacts, risk_scores
 
     except Exception as e:
         print(f'Image predict error: {e}')
         r, c = _heuristic_confidence(quality_metrics)
-        artifacts = run_forensic_analysis(quality_metrics, r, c) if quality_metrics else []
-        return r, c, round(time.time() - start, 2), True, quality_metrics, artifacts
+        r, c, _ = _classify_result(r, c, quality_metrics)
+        risk_scores = compute_forensic_risk_scores(quality_metrics)
+        artifacts   = run_forensic_analysis(quality_metrics, r, c) if quality_metrics else []
+        return r, c, round(time.time() - start, 2), True, quality_metrics, artifacts, risk_scores
 
 
 def predict_video(video_path, num_frames=10):
-    start = time.time()
+    # Video classification uses ONLY the ML model average across sampled frames.
+    # _classify_result and sat_cv AI-image checks are intentionally NOT applied
+    # to videos — those heuristics are tuned for still images and produce wrong
+    # results on video frames (a deepfake video can look authentic frame-by-frame).
+    # Forensic metrics are collected for INFO display only, never to override result.
+    start           = time.time()
     quality_metrics = None
+    risk_scores     = {}
+    forensic_clues  = []
 
     if ML_MODEL is None:
         r, c = _demo_prediction()
-        return r, c, round(time.time() - start, 2), True, quality_metrics, []
+        return r, c, round(time.time() - start, 2), True, quality_metrics, forensic_clues, risk_scores
 
     try:
         cap   = cv2.VideoCapture(video_path)
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        idxs  = np.linspace(0, total - 1, num_frames, dtype=int)
-        preds = []
+        fps   = cap.get(cv2.CAP_PROP_FPS) or 25
+        w_vid = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h_vid = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        idxs  = np.linspace(0, max(total - 1, 0), num_frames, dtype=int)
+
+        preds        = []
+        frame_images = []
 
         for idx in idxs:
             cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
             ret, frame = cap.read()
-            if ret:
-                frame = cv2.resize(frame, (224, 224))
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frame = frame.astype(np.float32)   # raw 0-255 for EfficientNet
-                frame = np.expand_dims(frame, 0)
-                preds.append(float(ML_MODEL.predict(frame, verbose=0)[0][0]))
+            if not ret:
+                continue
+            frame_images.append(frame.copy())
+            # Apply face crop at inference — matches training preprocessing
+            gray_f  = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            fc      = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+            faces_f = fc.detectMultiScale(gray_f, 1.1, 4, minSize=(60, 60))
+            if len(faces_f) > 0:
+                x, y, w, h = max(faces_f, key=lambda f: f[2]*f[3])
+                pad_x = int(w * 0.30); pad_y = int(h * 0.30)
+                x1 = max(0, x-pad_x); y1 = max(0, y-pad_y)
+                x2 = min(frame.shape[1], x+w+pad_x); y2 = min(frame.shape[0], y+h+pad_y)
+                crop = frame[y1:y2, x1:x2]
+            else:
+                h_f, w_f = frame.shape[:2]
+                margin = min(h_f, w_f) // 4
+                crop = frame[margin:h_f-margin, margin:w_f-margin]
+            resized = cv2.resize(crop, (224, 224))
+            rgb     = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32)
+            preds.append(float(ML_MODEL.predict(np.expand_dims(rgb, 0), verbose=0)[0][0]))
 
         cap.release()
         avg = float(np.mean(preds)) if preds else 0.5
 
-        # Same broken-model guard for video
         if _is_constant_output_model(avg):
             print(f'⚠  Video model output avg={avg:.4f} — using demo fallback')
-            r, c = _demo_prediction()
-            return r, c, round(time.time() - start, 2), True, quality_metrics, []
-
-        if avg > 0.5:
-            r, c = 'fake', round(avg * 100, 2)
+            r, c    = _demo_prediction()
+            is_demo = True
         else:
-            r, c = 'real', round((1.0 - avg) * 100, 2)
+            # Threshold raised 0.5 → 0.60 for video.
+            # Videos with inconsistent frame scores (some real, some fake frames)
+            # average to ~50-55% and get wrongly labelled FAKE at threshold 0.5.
+            # Real deepfake videos score consistently high (80%+).
+            # Threshold 0.60 eliminates borderline false positives.
+            # Class mapping: fake=0, real=1 (alphabetical)
+            # avg close to 0.0 = fake, close to 1.0 = real
+            VIDEO_THRESHOLD = 0.40   # below 0.4 = fake (was 0.60 when inverted)
+            if avg < VIDEO_THRESHOLD:
+                r, c = 'fake', round((1.0 - avg) * 100, 2)
+            else:
+                r, c = 'real', round(avg * 100, 2)
+            is_demo = False
 
-        return r, c, round(time.time() - start, 2), False, quality_metrics, []
+        # ── Collect forensic INFO on the most representative frame ──────────────
+        # This is purely for displaying metrics/clues in the UI.
+        # It does NOT change r or c — the ML verdict is final for video.
+        if frame_images and preds:
+            best_idx  = int(np.argmin(np.abs(np.array(preds) - avg)))
+            rep_frame = frame_images[best_idx]
+
+            import tempfile
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                    tmp_path = tmp.name
+                cv2.imwrite(tmp_path, rep_frame)
+
+                quality_metrics = analyze_image_quality(tmp_path)
+
+                if quality_metrics:
+                    # Add video-specific fields
+                    quality_metrics['video_fps']          = round(float(fps), 2)
+                    quality_metrics['video_frame_count']  = total
+                    quality_metrics['video_duration_sec'] = round(total / fps, 1) if fps else 0
+                    quality_metrics['frames_analyzed']    = len(preds)
+                    quality_metrics['frame_scores']       = [round(p * 100, 1) for p in preds]
+                    quality_metrics['resolution']         = f'{w_vid}x{h_vid}'
+
+                    # Forensic clues and risk scores use the already-decided r/c
+                    # _classify_result is deliberately NOT called here for video
+                    forensic_clues = run_forensic_analysis(quality_metrics, r, c)
+                    risk_scores    = compute_forensic_risk_scores(quality_metrics)
+            finally:
+                if tmp_path:
+                    try:
+                        os.unlink(tmp_path)
+                    except Exception:
+                        pass
+
+        return r, c, round(time.time() - start, 2), is_demo, quality_metrics, forensic_clues, risk_scores
 
     except Exception as e:
         print(f'Video predict error: {e}')
+        import traceback; traceback.print_exc()
         r, c = _demo_prediction()
-        return r, c, round(time.time() - start, 2), True, quality_metrics, []
+        return r, c, round(time.time() - start, 2), True, quality_metrics, forensic_clues, risk_scores
 
 
 # ── Upload single image ────────────────────────────────────────────────────
@@ -602,11 +1015,12 @@ def upload_image():
 
     try:
         fp = save_upload_file(file, 'images')
-        r, c, pt, demo, quality, forensic_clues = predict_image(fp)
+        r, c, pt, demo, quality, forensic_clues, risk_scores = predict_image(fp)
 
         metadata = {
             'quality_metrics': quality,
             'forensic_clues':  forensic_clues,
+            'risk_scores':     risk_scores,
         }
 
         det = Detection(
@@ -632,6 +1046,7 @@ def upload_image():
             'is_demo':         demo,
             'quality_metrics': quality,
             'forensic_clues':  forensic_clues,
+            'risk_scores':     risk_scores,
         }), 200
 
     except Exception as e:
@@ -652,7 +1067,7 @@ def upload_video():
 
     try:
         fp = save_upload_file(file, 'videos')
-        r, c, pt, demo, quality, artifacts = predict_video(fp)
+        r, c, pt, demo, quality, artifacts, risk_scores = predict_video(fp)
 
         det = Detection(
             user_id=user.id, file_name=file.filename, file_type='video',
@@ -667,6 +1082,15 @@ def upload_video():
         except Exception:
             pass
 
+        metadata = {
+            'quality_metrics': quality,
+            'forensic_clues':  artifacts,
+            'risk_scores':     risk_scores,
+        }
+        # Persist forensic data so history view can display it
+        det.extra_data = json.dumps(metadata)
+        db.session.commit()
+
         return jsonify({
             'message':         'Video analysed.',
             'result':          r,
@@ -674,6 +1098,9 @@ def upload_video():
             'processing_time': pt,
             'detection_id':    det.id,
             'is_demo':         demo,
+            'quality_metrics': quality,
+            'forensic_clues':  artifacts,
+            'risk_scores':     risk_scores,
         }), 200
 
     except Exception as e:
@@ -702,9 +1129,9 @@ def upload_bulk():
             sub = 'images' if ftype == 'image' else 'videos'
             fp  = save_upload_file(file, sub)
             if ftype == 'image':
-                r, c, pt, demo, quality, artifacts = predict_image(fp)
+                r, c, pt, demo, quality, artifacts, risk_scores = predict_image(fp)
             else:
-                r, c, pt, demo, quality, artifacts = predict_video(fp)
+                r, c, pt, demo, quality, artifacts, risk_scores = predict_video(fp)
 
             det = Detection(
                 user_id=user.id, file_name=file.filename, file_type=ftype,
