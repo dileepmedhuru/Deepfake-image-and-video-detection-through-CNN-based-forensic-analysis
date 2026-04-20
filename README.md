@@ -1,6 +1,6 @@
 # 🔍 Deepfake Detection System
 
-A full-stack AI web application that detects **deepfake , real and AI-generated media** from images and videos using deep learning and forensic analysis.
+A full-stack AI web application that detects **Deepfake , Real and AI-generated media** from images and videos using deep learning and forensic analysis.
 
 Built with **Flask, TensorFlow (EfficientNetB0), and OpenCV**, this system combines ML predictions with low-level visual signals to deliver explainable results.
 
